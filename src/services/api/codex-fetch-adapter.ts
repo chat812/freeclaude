@@ -1,3 +1,5 @@
+import { getGlobalConfig } from '../../utils/config.js'
+
 /**
  * Codex Fetch Adapter
  *
@@ -776,6 +778,10 @@ export function createOpenAIApiFetch(
 
     // Translate to Codex/OpenAI format
     const { codexBody, codexModel } = translateToCodexBody(anthropicBody)
+
+    // Override model with user-selected model from config if available
+    const storedModel = getGlobalConfig().openaiModel
+    if (storedModel) codexBody.model = storedModel
 
     // Call OpenAI-compatible API — use /responses endpoint
     const endpoint = `${normalizedBase}/responses`

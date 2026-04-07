@@ -257,6 +257,12 @@ export type GlobalConfig = {
    * Defaults to 'https://api.openai.com/v1' if not set.
    */
   openaiBaseUrl?: string
+
+  /**
+   * Model ID selected by the user from the OpenAI-compatible API.
+   * When set, overrides the default model mapping.
+   */
+  openaiModel?: string
   iterm2KeyBindingInstalled?: boolean // Legacy - keeping for backward compatibility
   editorMode?: EditorMode
   bypassPermissionsModeAccepted?: boolean

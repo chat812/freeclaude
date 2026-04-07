@@ -64,13 +64,49 @@ function ThirdPartyApiKeySetup({
   onDone(): void
   onBack(): void
 }): React.ReactNode {
-  const [step, setStep] = React.useState<'base-url' | 'api-key'>('base-url')
+  const [step, setStep] = React.useState<'base-url' | 'api-key' | 'loading' | 'model-select'>('base-url')
   const [apiKey, setApiKey] = React.useState('')
   const [baseUrl, setBaseUrl] = React.useState('')
   const [baseUrlCursor, setBaseUrlCursor] = React.useState(0)
   const [apiKeyCursor, setApiKeyCursor] = React.useState(0)
+  const [models, setModels] = React.useState<Array<{ id: string }>>([])
+  const [fetchError, setFetchError] = React.useState('')
 
   useKeybinding('confirm:no', onBack, { context: 'Cancel', isActive: step === 'base-url' })
+
+  function saveAndDone(key: string, modelId?: string) {
+    saveGlobalConfig(current => ({
+      ...current,
+      openaiApiKey: key,
+      openaiBaseUrl: baseUrl || undefined,
+      openaiModel: modelId || undefined,
+      apiProvider: 'openai',
+    }))
+    process.env.CLAUDE_CODE_USE_OPENAI = '1'
+    onDone()
+  }
+
+  function fetchModels(key: string) {
+    const base = (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
+    setStep('loading')
+    globalThis.fetch(`${base}/models`, {
+      headers: { Authorization: `Bearer ${key}` },
+    })
+      .then(r => r.json())
+      .then((data: any) => {
+        const list: Array<{ id: string }> = Array.isArray(data.data) ? data.data : []
+        if (list.length > 0) {
+          setModels(list.sort((a, b) => a.id.localeCompare(b.id)))
+          setStep('model-select')
+        } else {
+          saveAndDone(key)
+        }
+      })
+      .catch(() => {
+        setFetchError('Could not fetch models — proceeding without model selection.')
+        saveAndDone(key)
+      })
+  }
 
   if (step === 'base-url') {
     return (
@@ -93,30 +129,47 @@ function ThirdPartyApiKeySetup({
     )
   }
 
+  if (step === 'api-key') {
+    return (
+      <Box flexDirection="column" gap={1} marginTop={1}>
+        <Text bold>API Key</Text>
+        <Text dimColor>Enter your API key:</Text>
+        <TextInput
+          value={apiKey}
+          onChange={(v) => { setApiKey(v); setApiKeyCursor(v.length) }}
+          cursorOffset={apiKeyCursor}
+          onChangeCursorOffset={setApiKeyCursor}
+          onSubmit={(value: string) => {
+            const trimmed = value.trim()
+            if (!trimmed) return
+            setApiKey(trimmed)
+            fetchModels(trimmed)
+          }}
+          placeholder="sk-..."
+        />
+        <Text dimColor>Press Enter to confirm</Text>
+      </Box>
+    )
+  }
+
+  if (step === 'loading') {
+    return (
+      <Box flexDirection="column" gap={1} marginTop={1}>
+        <Spinner label="Fetching available models..." />
+        {fetchError ? <Text color="yellow">{fetchError}</Text> : null}
+      </Box>
+    )
+  }
+
+  // model-select
   return (
     <Box flexDirection="column" gap={1} marginTop={1}>
-      <Text bold>OpenAI-compatible API Key</Text>
-      <Text dimColor>Enter your API key:</Text>
-      <TextInput
-        value={apiKey}
-        onChange={(v) => { setApiKey(v); setApiKeyCursor(v.length) }}
-        cursorOffset={apiKeyCursor}
-        onChangeCursorOffset={setApiKeyCursor}
-        onSubmit={(value: string) => {
-          const trimmed = value.trim()
-          if (!trimmed) return
-          saveGlobalConfig(current => ({
-            ...current,
-            openaiApiKey: trimmed,
-            openaiBaseUrl: baseUrl || undefined,
-            apiProvider: 'openai',
-          }))
-          process.env.CLAUDE_CODE_USE_OPENAI = '1'
-          onDone()
-        }}
-        placeholder="sk-..."
+      <Text bold>Select Model</Text>
+      <Text dimColor>Choose the model to use with this API:</Text>
+      <Select
+        options={models.map(m => ({ label: <Text>{m.id}</Text>, value: m.id }))}
+        onChange={(modelId: string) => saveAndDone(apiKey, modelId)}
       />
-      <Text dimColor>Press Enter to confirm</Text>
     </Box>
   )
 }
