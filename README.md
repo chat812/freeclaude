@@ -100,17 +100,28 @@ Free CC CLI ←──WebSocket──→ Relay Server ←──WebSocket──→
 
 ### Setup the Server
 
+**Quick install (binary):**
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/chat812/freecc-server/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/chat812/freecc-relay/main/install.sh | sudo bash
 ```
 
-Or manually:
+**Or download the binary directly** from [Releases](https://github.com/chat812/freecc-relay/releases):
 
 ```bash
-git clone https://github.com/chat812/freecc-server.git
-cd freecc-server
-npm install
-node index.js --port 8081
+# Linux amd64
+wget https://github.com/chat812/freecc-relay/releases/latest/download/freecc-relay-linux-amd64
+chmod +x freecc-relay-linux-amd64
+./freecc-relay-linux-amd64 --port 8081
+```
+
+**Or build from source (Rust):**
+
+```bash
+git clone https://github.com/chat812/freecc-relay.git
+cd freecc-relay
+cargo build --release
+./target/release/freecc-relay --port 8081
 ```
 
 The server prints a client key and admin password on startup.
@@ -148,14 +159,13 @@ The server prints a client key and admin password on startup.
 
 ```bash
 # View logs
-journalctl -u claude-remote -f
+journalctl -u freecc-relay -f
 
 # Get admin password
-journalctl -u claude-remote | grep "Admin password"
+journalctl -u freecc-relay | grep "Admin password"
 
 # Generate additional client keys
-cd /opt/claude-remote-server
-node index.js --generate-key alice
+freecc-relay --generate-key alice
 ```
 
 ---
@@ -302,7 +312,7 @@ Free CC uses `~/.freecc/` for all configuration, separate from Claude Code's `~/
 
 ## Related
 
-- [freecc-server](https://github.com/chat812/freecc-server) — Self-hosted relay server for remote web access
+- [freecc-relay](https://github.com/chat812/freecc-relay) — Self-hosted relay server for remote web access
 
 ---
 
