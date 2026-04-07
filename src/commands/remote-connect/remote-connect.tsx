@@ -9,6 +9,7 @@ import { RemoteClient } from '../../remote-server/client.js'
 import {
   dispatchRemoteInput,
   dispatchRemoteInterrupt,
+  dispatchPermissionResponse,
   getRemoteClient,
   setRemoteClient,
 } from '../../remote-server/relay.js'
@@ -60,6 +61,7 @@ function RemoteConnectUI({
           {
             onUserMessage: (content) => { dispatchRemoteInput(content) },
             onInterrupt: () => { dispatchRemoteInterrupt() },
+            onPermissionResponse: (decision) => { dispatchPermissionResponse(decision) },
             onConnectionChange: () => {},
             onError: () => {},
           },

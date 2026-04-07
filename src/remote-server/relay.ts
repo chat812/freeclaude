@@ -9,11 +9,13 @@ import { getBuiltinPlugins } from '../plugins/builtinPlugins.js'
 type RemoteInputListener = (input: string) => void
 type RemoteInterruptListener = () => void
 type MessagesRef = { current: any[] }
+type PermissionHandler = { onAllow: () => void; onReject: () => void }
 
 let activeClient: RemoteClient | null = null
 let inputListener: RemoteInputListener | null = null
 let interruptListener: RemoteInterruptListener | null = null
 let registeredMessagesRef: MessagesRef | null = null
+let currentPermissionHandler: PermissionHandler | null = null
 let pollingInterval: ReturnType<typeof setInterval> | null = null
 let lastLen = 0
 let lastText = ''
@@ -68,6 +70,37 @@ let lastWebInput = ''
 export function dispatchRemoteInput(content: string): void {
   lastWebInput = content
   inputListener?.(content)
+}
+
+export function setRemotePermissionRequest(
+  id: string | null,
+  tool: string,
+  detail: string,
+  handler: PermissionHandler | null,
+): void {
+  currentPermissionHandler = handler
+  if (!activeClient) return
+  if (id && handler) {
+    activeClient.send({
+      type: 'permission_request',
+      id,
+      name: tool,
+      detail,
+      timestamp: Date.now(),
+    })
+  } else {
+    activeClient.send({ type: 'permission_request', id: '', timestamp: Date.now() })
+  }
+}
+
+export function dispatchPermissionResponse(decision: 'allow' | 'reject'): void {
+  if (!currentPermissionHandler) return
+  if (decision === 'allow') {
+    currentPermissionHandler.onAllow()
+  } else {
+    currentPermissionHandler.onReject()
+  }
+  currentPermissionHandler = null
 }
 
 /**

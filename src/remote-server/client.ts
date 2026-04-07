@@ -13,6 +13,8 @@ export type RemoteClientEvents = {
   onUserMessage: (content: string) => void
   /** Remote web user requested interrupt/stop */
   onInterrupt: () => void
+  /** Remote web user responded to a permission request */
+  onPermissionResponse: (decision: 'allow' | 'reject') => void
   /** Session info updated */
   onSessionInfo: (info: { sessionId: string; webClients: number }) => void
   /** System notification from server */
@@ -266,6 +268,12 @@ export class RemoteClient {
 
       case 'interrupt':
         this.events.onInterrupt?.()
+        break
+
+      case 'permission_response':
+        if (msg.decision) {
+          this.events.onPermissionResponse?.(msg.decision)
+        }
         break
 
       case 'pong':

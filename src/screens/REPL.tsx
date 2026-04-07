@@ -290,7 +290,7 @@ import { useMessageActions, MessageActionsKeybindings, MessageActionsBar, type M
 import { setClipboard } from '../ink/termio/osc.js';
 import type { ScrollBoxHandle } from '../ink/components/ScrollBox.js';
 import { createAttachmentMessage, getQueuedCommandAttachments } from '../utils/attachments.js';
-import { forwardMessagesToRemote, onRemoteInput, onRemoteInterrupt } from '../remote-server/relay.js';
+import { forwardMessagesToRemote, getRemoteClient, onRemoteInput, onRemoteInterrupt, setRemotePermissionRequest } from '../remote-server/relay.js';
 
 // Stable empty array for hooks that accept MCPServerConnection[] — avoids
 // creating a new [] literal on every render in remote mode, which would
@@ -3630,6 +3630,28 @@ export function REPL({
     abortControllerRef.current?.abort('user-cancel');
   });
   forwardMessagesToRemote(messagesRef);
+  // Forward permission requests to remote web
+  const lastRemotePermIdRef = useRef<string | null>(null);
+  const currentRemotePerm = toolUseConfirmQueue[0];
+  const currentRemotePermId = currentRemotePerm?.toolUseID ?? null;
+  if (getRemoteClient() && currentRemotePermId !== lastRemotePermIdRef.current) {
+    lastRemotePermIdRef.current = currentRemotePermId;
+    if (currentRemotePerm) {
+      const permInput = currentRemotePerm.input as Record<string, unknown>;
+      const detail = Object.entries(permInput).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n');
+      setRemotePermissionRequest(
+        currentRemotePerm.toolUseID,
+        currentRemotePerm.tool.name,
+        detail,
+        {
+          onAllow: () => { currentRemotePerm.onAllow(currentRemotePerm.input as never, [], undefined, undefined); },
+          onReject: () => { currentRemotePerm.onReject(); },
+        }
+      );
+    } else {
+      setRemotePermissionRequest(null, '', '', null);
+    }
+  }
 
   const handleOpenRateLimitOptions = useCallback(() => {
     void onSubmitRef.current('/rate-limit-options', {
