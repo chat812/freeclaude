@@ -1633,9 +1633,12 @@ export function isCodexSubscriber(): boolean {
     return false
   }
 
-  // Verify we actually have valid Codex tokens
+  // Codex OAuth tokens
   const tokens = getCodexOAuthTokens()
-  return !!tokens?.accessToken
+  if (tokens?.accessToken) return true
+
+  // Also treat API key users as OpenAI subscribers so GPT models are shown
+  return !!getGlobalConfig().openaiApiKey
 }
 
 /**
