@@ -595,20 +595,37 @@ export async function main() {
 
   // Restore persisted provider choice from config
   // Must run before any getAPIProvider() calls
+  // Uses direct file read to avoid config system initialization issues
   try {
-    const { getGlobalConfig: getGCfg } = await import('./utils/config.js');
-    const savedProvider = getGCfg().apiProvider;
-    if (savedProvider && savedProvider !== 'firstParty') {
-      const envVarMap: Record<string, string> = {
-        bedrock: 'CLAUDE_CODE_USE_BEDROCK',
-        vertex: 'CLAUDE_CODE_USE_VERTEX',
-        foundry: 'CLAUDE_CODE_USE_FOUNDRY',
-        openai: 'CLAUDE_CODE_USE_OPENAI',
-      };
-      const envVar = envVarMap[savedProvider];
-      if (envVar && !process.env[envVar]) {
-        process.env[envVar] = '1';
+    const { readFileSync, existsSync } = await import('fs');
+    const { join: joinPath } = await import('path');
+    const { homedir: getHome } = await import('os');
+    const home = getHome();
+
+    // Check both possible config locations
+    const candidates = [
+      joinPath(home, '.freecc.json'),
+      joinPath(home, '.freecc', '.config.json'),
+    ];
+
+    for (const cfgPath of candidates) {
+      if (!existsSync(cfgPath)) continue;
+      const raw = readFileSync(cfgPath, 'utf-8');
+      const cfg = JSON.parse(raw);
+      const savedProvider = cfg.apiProvider;
+      if (savedProvider && savedProvider !== 'firstParty') {
+        const envVarMap: Record<string, string> = {
+          bedrock: 'CLAUDE_CODE_USE_BEDROCK',
+          vertex: 'CLAUDE_CODE_USE_VERTEX',
+          foundry: 'CLAUDE_CODE_USE_FOUNDRY',
+          openai: 'CLAUDE_CODE_USE_OPENAI',
+        };
+        const envVar = envVarMap[savedProvider];
+        if (envVar && !process.env[envVar]) {
+          process.env[envVar] = '1';
+        }
       }
+      break;
     }
   } catch {}
 
