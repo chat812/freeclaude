@@ -16,7 +16,12 @@ import { getDefaultMainLoopModelSetting, isOpus1mMergeEnabled, renderDefaultMode
 import { isModelAllowed } from '../../utils/model/modelAllowlist.js';
 import { getAPIProvider } from '../../utils/model/providers.js';
 import { validateModel } from '../../utils/model/validateModel.js';
-import { saveGlobalConfig } from '../../utils/config.js';
+import { getGlobalConfig, saveGlobalConfig } from '../../utils/config.js';
+import { OPENROUTER_DEFAULT_BASE_URL } from '../../services/api/chat-completions-adapter.js';
+import { Box, Text, useInput } from '../../ink.js';
+import { Spinner } from '../../components/Spinner.js';
+import TextInput from '../../components/TextInput.js';
+import { Select } from '../../components/CustomSelect/select.js';
 function ModelPickerWrapper(t0) {
   const $ = _c(17);
   const {
@@ -203,9 +208,7 @@ function SetModelAndClose({
         mainLoopModel: modelValue,
         mainLoopModelForSession: null
       }));
-      if (getAPIProvider() === 'openai' && modelValue) {
-        saveGlobalConfig(current => ({ ...current, openaiModel: modelValue }));
-      }
+      // Provider-specific config save is handled by onChangeAppState
       let message = `Set model to ${chalk.bold(renderModelLabel(modelValue))}`;
       let wasFastModeToggledOn = undefined;
       if (isFastModeEnabled()) {
@@ -273,6 +276,101 @@ function _temp8(s_0) {
 function _temp7(s) {
   return s.mainLoopModel;
 }
+function ModelPickerWithRefetch({ onDone }: { onDone: Parameters<LocalJSXCommandCall>[0] }): React.ReactNode {
+  const provider = getAPIProvider()
+  const needsFetch = provider === 'openrouter'
+  const [fetching, setFetching] = React.useState(needsFetch)
+
+  React.useEffect(() => {
+    if (!needsFetch) return
+
+    const cfg = getGlobalConfig()
+    if (!cfg.openrouterApiKey) { setFetching(false); return }
+    const url = `${OPENROUTER_DEFAULT_BASE_URL}/models`
+    const headers = { Authorization: `Bearer ${cfg.openrouterApiKey}` }
+
+    globalThis.fetch(url, { headers })
+      .then(r => r.json())
+      .then((data: unknown) => {
+        const d = data as { data?: unknown }
+        const list: Array<{ id: string }> = Array.isArray(d.data)
+          ? (d as { data: Array<{ id: string }> }).data
+          : []
+        if (list.length > 0) {
+          const sorted = list.map(m => m.id).sort((a, b) => a.localeCompare(b))
+          saveGlobalConfig(current => ({ ...current, openrouterAvailableModels: sorted }))
+        }
+      })
+      .catch(() => {})
+      .finally(() => setFetching(false))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (fetching) {
+    return (
+      <Box flexDirection="column">
+        <Spinner label="Refreshing model list..." />
+      </Box>
+    )
+  }
+
+  return <ModelPickerWrapper onDone={onDone} />
+}
+
+function ModelCommandEntry({ onDone }: { onDone: Parameters<LocalJSXCommandCall>[0] }): React.ReactNode {
+  const [mode, setMode] = React.useState<'initial' | 'list' | 'manual'>('initial')
+  const [manualModel, setManualModel] = React.useState('')
+  const [manualCursor, setManualCursor] = React.useState(0)
+  const setAppState = useSetAppState()
+
+  useInput((_input, key) => {
+    if (key.escape) setMode('initial')
+  }, { isActive: mode === 'manual' })
+
+  if (mode === 'list') return <ModelPickerWithRefetch onDone={onDone} />
+
+  if (mode === 'manual') {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Model ID</Text>
+        <Text dimColor>Enter the model ID to use:</Text>
+        <TextInput
+          value={manualModel}
+          onChange={setManualModel}
+          cursorOffset={manualCursor}
+          onChangeCursorOffset={setManualCursor}
+          onSubmit={(value: string) => {
+            const trimmed = value.trim()
+            if (!trimmed) return
+            // Provider-specific config save is handled by onChangeAppState
+            setAppState(prev => ({ ...prev, mainLoopModel: trimmed, mainLoopModelForSession: null }))
+            onDone(`Set model to ${chalk.bold(trimmed)}`)
+          }}
+          placeholder="claude-sonnet-4-6"
+          focus={true}
+          showCursor={true}
+        />
+        <Text dimColor>Press Esc to go back</Text>
+      </Box>
+    )
+  }
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Select
+        options={[
+          { value: 'list', label: 'Browse available models', description: 'Select from the model list' },
+          { value: 'manual', label: 'Enter model ID', description: 'Type a custom model ID manually' },
+        ]}
+        onChange={(value: string) => setMode(value as 'list' | 'manual')}
+        onCancel={() => {
+          const current = renderModelLabel(null)
+          onDone(`Kept model as ${chalk.bold(current)}`, { display: 'system' })
+        }}
+      />
+    </Box>
+  )
+}
+
 export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
   args = args?.trim() || '';
   if (COMMON_INFO_ARGS.includes(args)) {
@@ -293,7 +391,7 @@ export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
     });
     return <SetModelAndClose args={args} onDone={onDone} />;
   }
-  return <ModelPickerWrapper onDone={onDone} />;
+  return <ModelCommandEntry onDone={onDone} />;
 };
 function renderModelLabel(model: string | null): string {
   const rendered = renderDefaultModelSetting(model ?? getDefaultMainLoopModelSetting());

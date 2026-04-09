@@ -237,7 +237,7 @@ export type GlobalConfig = {
    * Persisted API provider choice. Restored on startup to set the
    * corresponding CLAUDE_CODE_USE_* env var.
    */
-  apiProvider?: 'firstParty' | 'bedrock' | 'vertex' | 'foundry' | 'openai'
+  apiProvider?: 'firstParty' | 'bedrock' | 'vertex' | 'foundry' | 'openai' | 'openrouter' | 'anthropicCompat'
 
   codexOAuth?: {
     accessToken: string
@@ -264,6 +264,13 @@ export type GlobalConfig = {
    */
   openaiModel?: string
   openaiAvailableModels?: string[]
+  openrouterApiKey?: string
+  openrouterModel?: string
+  openrouterAvailableModels?: string[]
+  anthropicCompatApiKey?: string
+  anthropicCompatBaseUrl?: string
+  anthropicCompatModel?: string
+  anthropicCompatAvailableModels?: string[]
   iterm2KeyBindingInstalled?: boolean // Legacy - keeping for backward compatibility
   editorMode?: EditorMode
   bypassPermissionsModeAccepted?: boolean

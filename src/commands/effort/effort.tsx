@@ -5,6 +5,7 @@ import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEve
 import { useAppState, useSetAppState } from '../../state/AppState.js';
 import type { LocalJSXCommandOnDone } from '../../types/command.js';
 import { type EffortValue, getDisplayedEffortLevel, getEffortEnvOverride, getEffortValueDescription, isEffortLevel, toPersistableEffort } from '../../utils/effort.js';
+import { getAPIProvider } from '../../utils/model/providers.js';
 import { updateSettingsForSource } from '../../utils/settings/settings.js';
 const COMMON_HELP_ARGS = ['help', '-h', '--help'];
 type EffortCommandResult = {
@@ -113,6 +114,10 @@ export function executeEffort(args: string): EffortCommandResult {
     return {
       message: `Invalid argument: ${args}. Valid options are: low, medium, high, max, auto`
     };
+  }
+  // OpenAI-compatible APIs use 'xhigh' instead of 'max'
+  if (normalized === 'max' && getAPIProvider() === 'openai') {
+    return setEffortValue('xhigh' as EffortValue);
   }
   return setEffortValue(normalized);
 }

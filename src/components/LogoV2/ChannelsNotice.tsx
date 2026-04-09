@@ -189,8 +189,8 @@ function _temp() {
   const allowlist = getEffectiveChannelAllowlist(sub, policy?.allowedChannelPlugins);
   return {
     channels: ch,
-    disabled: !isChannelsEnabled(),
-    noAuth: !getClaudeAIOAuthTokens()?.accessToken,
+    disabled: !isChannelsEnabled() && !getHasDevChannels(),
+    noAuth: !getClaudeAIOAuthTokens()?.accessToken && !getHasDevChannels(),
     policyBlocked: managed && policy?.channelsEnabled !== true,
     list: l,
     unmatched: findUnmatched(ch, allowlist)

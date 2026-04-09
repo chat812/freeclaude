@@ -1641,6 +1641,17 @@ export function isCodexSubscriber(): boolean {
   return !!getGlobalConfig().openaiApiKey
 }
 
+export function isOpenRouterUser(): boolean {
+  if (getAPIProvider() !== 'openrouter') return false
+  return !!getGlobalConfig().openrouterApiKey
+}
+
+export function isAnthropicCompatUser(): boolean {
+  if (getAPIProvider() !== 'anthropicCompat') return false
+  const cfg = getGlobalConfig()
+  return !!cfg.anthropicCompatApiKey && !!cfg.anthropicCompatBaseUrl
+}
+
 /**
  * Check if the current OAuth token has the user:profile scope.
  *

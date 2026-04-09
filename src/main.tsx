@@ -619,6 +619,8 @@ export async function main() {
           vertex: 'CLAUDE_CODE_USE_VERTEX',
           foundry: 'CLAUDE_CODE_USE_FOUNDRY',
           openai: 'CLAUDE_CODE_USE_OPENAI',
+          openrouter: 'CLAUDE_CODE_USE_OPENROUTER',
+          anthropicCompat: 'CLAUDE_CODE_USE_ANTHROPIC_COMPAT',
         };
         const envVar = envVarMap[savedProvider];
         if (envVar && !process.env[envVar]) {

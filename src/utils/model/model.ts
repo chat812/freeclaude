@@ -13,7 +13,6 @@ import {
   isMaxSubscriber,
   isProSubscriber,
   isTeamPremiumSubscriber,
-  isCodexSubscriber,
 } from '../auth.js'
 import { getAntModelOverrideConfig, resolveAntModel } from './antModels.js'
 import {
@@ -180,6 +179,16 @@ export function getRuntimeMainLoopModel(params: {
  * @returns The default model setting to use
  */
 export function getDefaultMainLoopModelSetting(): ModelName | ModelAlias {
+  if (getAPIProvider() === 'anthropicCompat') {
+    const cfg = getGlobalConfig()
+    if (cfg.anthropicCompatModel) return cfg.anthropicCompatModel
+    return 'claude-sonnet-4-6'
+  }
+  if (getAPIProvider() === 'openrouter') {
+    const cfg = getGlobalConfig()
+    if (cfg.openrouterModel) return cfg.openrouterModel
+    return 'openai/gpt-4o'
+  }
   if (getAPIProvider() === 'openai') {
     const cfg = getGlobalConfig()
     if (cfg.openaiModel) return cfg.openaiModel

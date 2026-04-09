@@ -3,9 +3,10 @@ import * as React from 'react'
 import type { CommandResultDisplay } from '../../commands.js'
 import { Login } from '../../commands/login/login.js'
 import { Select } from '../../components/CustomSelect/select.js'
+import { Spinner } from '../../components/Spinner.js'
 import TextInput from '../../components/TextInput.js'
 import { COMMON_HELP_ARGS, COMMON_INFO_ARGS } from '../../constants/xml.js'
-import { Box, Link, Text } from '../../ink.js'
+import { Box, Link, Text, useInput } from '../../ink.js'
 import { useKeybinding } from '../../keybindings/useKeybinding.js'
 import type {
   LocalJSXCommandCall,
@@ -14,7 +15,9 @@ import type {
 } from '../../types/command.js'
 import { getCodexOAuthTokens, hasAnthropicApiKeyAuth } from '../../utils/auth.js'
 import { getGlobalConfig, saveGlobalConfig } from '../../utils/config.js'
+import { OPENROUTER_DEFAULT_BASE_URL } from '../../services/api/chat-completions-adapter.js'
 import { getAPIProvider, type APIProvider } from '../../utils/model/providers.js'
+import { updateSettingsForSource } from '../../utils/settings/settings.js'
 
 const PROVIDER_OPTIONS: Array<{
   value: APIProvider
@@ -52,6 +55,18 @@ const PROVIDER_OPTIONS: Array<{
     description: 'OpenAI-compatible API',
     envVar: 'CLAUDE_CODE_USE_OPENAI',
   },
+  {
+    value: 'openrouter',
+    label: 'OpenRouter',
+    description: 'Access 200+ models via OpenRouter',
+    envVar: 'CLAUDE_CODE_USE_OPENROUTER',
+  },
+  {
+    value: 'anthropicCompat',
+    label: 'Anthropic-Compatible API',
+    description: 'Custom endpoint with Anthropic API format',
+    envVar: 'CLAUDE_CODE_USE_ANTHROPIC_COMPAT',
+  },
 ]
 
 const PROVIDER_ENV_VARS = [
@@ -59,6 +74,8 @@ const PROVIDER_ENV_VARS = [
   'CLAUDE_CODE_USE_VERTEX',
   'CLAUDE_CODE_USE_FOUNDRY',
   'CLAUDE_CODE_USE_OPENAI',
+  'CLAUDE_CODE_USE_OPENROUTER',
+  'CLAUDE_CODE_USE_ANTHROPIC_COMPAT',
 ]
 
 function getProviderLabel(provider: APIProvider): string {
@@ -76,6 +93,10 @@ function applyProvider(provider: APIProvider): void {
   if (option && option.envVar) {
     process.env[option.envVar] = '1'
   }
+
+  // Clear stale model from settings — the old provider's model won't work
+  // with the new provider. The new provider's default will be used instead.
+  updateSettingsForSource('userSettings', { model: undefined })
 
   // Persist the choice so it survives restarts
   saveGlobalConfig((current) => ({
@@ -110,6 +131,12 @@ function hasProviderCredentials(provider: APIProvider): boolean {
       )
     case 'openai':
       return !!getCodexOAuthTokens()?.accessToken || !!getGlobalConfig().openaiApiKey
+    case 'openrouter':
+      return !!getGlobalConfig().openrouterApiKey
+    case 'anthropicCompat': {
+      const cfg = getGlobalConfig()
+      return !!cfg.anthropicCompatApiKey && !!cfg.anthropicCompatBaseUrl
+    }
   }
 }
 
@@ -229,75 +256,250 @@ function OAuthLoginFlow({
 
 /**
  * API key input form for OpenAI provider.
+ * Mirrors ThirdPartyApiKeySetup in ConsoleOAuthFlow.tsx:
+ * base-url → api-key → fetch models → model-select (or skip if fetch fails).
  */
 function OpenAIApiKeySetup({
   onDone,
   onBack,
+  onChangeAPIKey,
 }: {
   onDone: LocalJSXCommandOnDone
   onBack: () => void
+  onChangeAPIKey: () => void
 }): React.ReactNode {
   const cfg = getGlobalConfig()
-  const [step, setStep] = React.useState<'api-key' | 'base-url'>('api-key')
+  const [step, setStep] = React.useState<'api-key' | 'base-url' | 'loading' | 'model-select'>('api-key')
   const [apiKey, setApiKey] = React.useState(cfg.openaiApiKey ?? '')
   const [baseUrl, setBaseUrl] = React.useState(cfg.openaiBaseUrl ?? '')
+  const [models, setModels] = React.useState<Array<{ id: string }>>([])
+  const [apiKeyCursor, setApiKeyCursor] = React.useState(cfg.openaiApiKey?.length ?? 0)
+  const [baseUrlCursor, setBaseUrlCursor] = React.useState(cfg.openaiBaseUrl?.length ?? 0)
 
-  useKeybinding('confirm:no', onBack, {
-    context: 'Cancel',
-    isActive: true,
-  })
+  useInput((_input, key) => {
+    if (!key.escape) return
+    if (step === 'api-key') onBack()
+    else if (step === 'base-url') setStep('api-key')
+  }, { isActive: step === 'api-key' || step === 'base-url' })
+
+  function saveAndDone(modelId?: string) {
+    saveGlobalConfig(current => ({
+      ...current,
+      openaiApiKey: apiKey,
+      openaiBaseUrl: baseUrl || undefined,
+      openaiModel: modelId || undefined,
+      openaiAvailableModels: models.length > 0 ? models.map(m => m.id) : undefined,
+      apiProvider: 'openai',
+    }))
+    for (const envVar of PROVIDER_ENV_VARS) {
+      delete process.env[envVar]
+    }
+    process.env.CLAUDE_CODE_USE_OPENAI = '1'
+    onChangeAPIKey()
+    const urlMsg = baseUrl ? ` with base URL ${chalk.dim(baseUrl)}` : ''
+    onDone(
+      `Switched provider to ${chalk.bold(getProviderLabel('openai'))} using API key${urlMsg}`,
+    )
+  }
+
+  function fetchModels() {
+    const base = (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
+    setStep('loading')
+    globalThis.fetch(`${base}/models`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    })
+      .then(r => r.json())
+      .then((data: unknown) => {
+        const list: Array<{ id: string }> = Array.isArray((data as { data?: unknown }).data)
+          ? (data as { data: Array<{ id: string }> }).data
+          : []
+        if (list.length > 0) {
+          setModels(list.sort((a, b) => a.id.localeCompare(b.id)))
+          setStep('model-select')
+        } else {
+          saveAndDone()
+        }
+      })
+      .catch(() => {
+        saveAndDone()
+      })
+  }
 
   if (step === 'api-key') {
     return (
       <Box flexDirection="column" gap={1}>
-        <Text bold>OpenAI API Key</Text>
-        <Text dimColor>Enter your OpenAI API key (sk-...):</Text>
+        <Text bold>API Key</Text>
+        <Text dimColor>Enter your OpenAI API key (press Enter to continue):</Text>
         <TextInput
           value={apiKey}
           onChange={setApiKey}
+          cursorOffset={apiKeyCursor}
+          onChangeCursorOffset={setApiKeyCursor}
           onSubmit={(value: string) => {
-            if (!value.trim()) {
-              onBack()
-              return
-            }
-            setApiKey(value.trim())
+            const trimmed = value.trim()
+            if (!trimmed) return
+            setApiKey(trimmed)
             setStep('base-url')
           }}
           placeholder="sk-..."
+          focus={true}
+          showCursor={true}
         />
         <Text dimColor>Press Esc to go back</Text>
       </Box>
     )
   }
 
-  // base-url step
+  if (step === 'base-url') {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Base URL <Text dimColor>(optional)</Text></Text>
+        <Text dimColor>
+          Leave empty for https://api.openai.com/v1, or enter a custom endpoint:
+        </Text>
+        <TextInput
+          value={baseUrl}
+          onChange={setBaseUrl}
+          cursorOffset={baseUrlCursor}
+          onChangeCursorOffset={setBaseUrlCursor}
+          onSubmit={(value: string) => {
+            const url = value.trim()
+            setBaseUrl(url)
+            fetchModels()
+          }}
+          placeholder="https://api.openai.com/v1"
+          focus={true}
+          showCursor={true}
+        />
+        <Text dimColor>Press Enter to continue · Esc to go back</Text>
+      </Box>
+    )
+  }
+
+  if (step === 'loading') {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Spinner label="Fetching available models..." />
+      </Box>
+    )
+  }
+
+  // model-select step
   return (
     <Box flexDirection="column" gap={1}>
-      <Text bold>OpenAI Base URL</Text>
-      <Text dimColor>
-        Enter base URL (leave empty for default https://api.openai.com/v1):
-      </Text>
-      <TextInput
-        value={baseUrl}
-        onChange={setBaseUrl}
-        onSubmit={(value: string) => {
-          const trimmedUrl = value.trim()
-          saveGlobalConfig(current => ({
-            ...current,
-            openaiApiKey: apiKey,
-            openaiBaseUrl: trimmedUrl || undefined,
-          }))
-          applyProvider('openai')
-          const urlMsg = trimmedUrl
-            ? ` with base URL ${chalk.dim(trimmedUrl)}`
-            : ''
-          onDone(
-            `Switched provider to ${chalk.bold(getProviderLabel('openai'))} using API key${urlMsg}`,
-          )
-        }}
-        placeholder="https://api.openai.com/v1"
+      <Text bold>Select Model</Text>
+      <Text dimColor>Choose the model to use with this API:</Text>
+      <Select
+        options={models.map(m => ({ label: m.id, value: m.id }))}
+        onChange={(modelId: string) => saveAndDone(modelId)}
       />
-      <Text dimColor>Press Esc to go back</Text>
+    </Box>
+  )
+}
+
+/**
+ * API key input form for OpenRouter provider.
+ * Flow: base-url → api-key → loading (fetch models) → model-select.
+ */
+function OpenRouterApiKeySetup({
+  onDone,
+  onBack,
+  onChangeAPIKey,
+}: {
+  onDone: LocalJSXCommandOnDone
+  onBack: () => void
+  onChangeAPIKey: () => void
+}): React.ReactNode {
+  const cfg = getGlobalConfig()
+  const [step, setStep] = React.useState<'api-key' | 'loading' | 'model-select'>('api-key')
+  const [apiKey, setApiKey] = React.useState(cfg.openrouterApiKey ?? '')
+  const [models, setModels] = React.useState<Array<{ id: string }>>([])
+  const [apiKeyCursor, setApiKeyCursor] = React.useState(cfg.openrouterApiKey?.length ?? 0)
+
+  useInput((_input, key) => {
+    if (!key.escape) return
+    onBack()
+  }, { isActive: step === 'api-key' })
+
+  function saveAndDone(modelId?: string) {
+    saveGlobalConfig(current => ({
+      ...current,
+      openrouterApiKey: apiKey,
+      openrouterModel: modelId || undefined,
+      openrouterAvailableModels: models.length > 0 ? models.map(m => m.id) : undefined,
+      apiProvider: 'openrouter',
+    }))
+    for (const envVar of PROVIDER_ENV_VARS) {
+      delete process.env[envVar]
+    }
+    process.env.CLAUDE_CODE_USE_OPENROUTER = '1'
+    onChangeAPIKey()
+    onDone(`Switched provider to ${chalk.bold(getProviderLabel('openrouter'))} using API key`)
+  }
+
+  function fetchModels(key: string) {
+    setStep('loading')
+    globalThis.fetch(`${OPENROUTER_DEFAULT_BASE_URL}/models`, {
+      headers: { Authorization: `Bearer ${key}` },
+    })
+      .then(r => r.json())
+      .then((data: unknown) => {
+        const list: Array<{ id: string }> = Array.isArray((data as { data?: unknown }).data)
+          ? (data as { data: Array<{ id: string }> }).data
+          : []
+        if (list.length > 0) {
+          setModels(list.sort((a, b) => a.id.localeCompare(b.id)))
+          setStep('model-select')
+        } else {
+          saveAndDone()
+        }
+      })
+      .catch(() => {
+        saveAndDone()
+      })
+  }
+
+  if (step === 'api-key') {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>OpenRouter API Key</Text>
+        <Text dimColor>Enter your OpenRouter API key and press Enter:</Text>
+        <TextInput
+          value={apiKey}
+          onChange={setApiKey}
+          cursorOffset={apiKeyCursor}
+          onChangeCursorOffset={setApiKeyCursor}
+          onSubmit={(value: string) => {
+            const trimmed = value.trim()
+            if (!trimmed) return
+            setApiKey(trimmed)
+            fetchModels(trimmed)
+          }}
+          placeholder="sk-or-..."
+          focus={true}
+          showCursor={true}
+        />
+        <Text dimColor>Press Esc to go back</Text>
+      </Box>
+    )
+  }
+
+  if (step === 'loading') {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Spinner label="Fetching available models..." />
+      </Box>
+    )
+  }
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Select Model</Text>
+      <Text dimColor>Choose the model to use with OpenRouter:</Text>
+      <Select
+        options={models.map(m => ({ label: m.id, value: m.id }))}
+        onChange={(modelId: string) => saveAndDone(modelId)}
+      />
     </Box>
   )
 }
@@ -320,6 +522,29 @@ function OpenAIOptionsMenu({
 }): React.ReactNode {
   const [subPhase, setSubPhase] = React.useState<'menu' | 'oauth' | 'apikey'>('menu')
 
+  const handleSelect = React.useCallback(
+    (value: string) => {
+      if (value === 'use-existing') {
+        if (isCurrent) {
+          onDone(
+            `Provider is already ${chalk.bold(getProviderLabel('openai'))}`,
+            { display: 'system' },
+          )
+        } else {
+          applyProvider('openai')
+          onDone(
+            `Switched provider to ${chalk.bold(getProviderLabel('openai'))}`,
+          )
+        }
+      } else if (value === 'oauth') {
+        setSubPhase('oauth')
+      } else if (value === 'apikey') {
+        setSubPhase('apikey')
+      }
+    },
+    [isCurrent, onDone],
+  )
+
   if (subPhase === 'oauth') {
     return (
       <OAuthLoginFlow
@@ -336,6 +561,7 @@ function OpenAIOptionsMenu({
       <OpenAIApiKeySetup
         onDone={onDone}
         onBack={() => setSubPhase('menu')}
+        onChangeAPIKey={context.onChangeAPIKey}
       />
     )
   }
@@ -367,29 +593,6 @@ function OpenAIOptionsMenu({
     },
   )
 
-  const handleSelect = React.useCallback(
-    (value: string) => {
-      if (value === 'use-existing') {
-        if (isCurrent) {
-          onDone(
-            `Provider is already ${chalk.bold(getProviderLabel('openai'))}`,
-            { display: 'system' },
-          )
-        } else {
-          applyProvider('openai')
-          onDone(
-            `Switched provider to ${chalk.bold(getProviderLabel('openai'))}`,
-          )
-        }
-      } else if (value === 'oauth') {
-        setSubPhase('oauth')
-      } else if (value === 'apikey') {
-        setSubPhase('apikey')
-      }
-    },
-    [isCurrent, onDone],
-  )
-
   return (
     <Box flexDirection="column">
       <Text bold>OpenAI Provider</Text>
@@ -405,11 +608,143 @@ function OpenAIOptionsMenu({
   )
 }
 
+/**
+ * API key + base URL setup for Anthropic-compatible providers.
+ * Flow: base-url → api-key → loading (fetch models) → model-select.
+ */
+function AnthropicCompatApiKeySetup({
+  onDone,
+  onBack,
+  onChangeAPIKey,
+}: {
+  onDone: LocalJSXCommandOnDone
+  onBack: () => void
+  onChangeAPIKey: () => void
+}): React.ReactNode {
+  const cfg = getGlobalConfig()
+  const [step, setStep] = React.useState<'base-url' | 'api-key' | 'model'>('base-url')
+  const [baseUrl, setBaseUrl] = React.useState(cfg.anthropicCompatBaseUrl ?? '')
+  const [apiKey, setApiKey] = React.useState(cfg.anthropicCompatApiKey ?? '')
+  const [model, setModel] = React.useState(cfg.anthropicCompatModel ?? '')
+  const [baseUrlCursor, setBaseUrlCursor] = React.useState(cfg.anthropicCompatBaseUrl?.length ?? 0)
+  const [apiKeyCursor, setApiKeyCursor] = React.useState(cfg.anthropicCompatApiKey?.length ?? 0)
+  const [modelCursor, setModelCursor] = React.useState(cfg.anthropicCompatModel?.length ?? 0)
+
+  useInput((_input, key) => {
+    if (!key.escape) return
+    if (step === 'base-url') onBack()
+    else if (step === 'api-key') setStep('base-url')
+    else if (step === 'model') setStep('api-key')
+  }, { isActive: step === 'base-url' || step === 'api-key' || step === 'model' })
+
+  function saveAndDone(modelId?: string) {
+    saveGlobalConfig(current => ({
+      ...current,
+      anthropicCompatApiKey: apiKey,
+      anthropicCompatBaseUrl: baseUrl,
+      anthropicCompatModel: modelId || undefined,
+      apiProvider: 'anthropicCompat',
+    }))
+    for (const envVar of PROVIDER_ENV_VARS) {
+      delete process.env[envVar]
+    }
+    process.env.CLAUDE_CODE_USE_ANTHROPIC_COMPAT = '1'
+    onChangeAPIKey()
+    onDone(`Switched provider to ${chalk.bold(getProviderLabel('anthropicCompat'))} at ${chalk.dim(baseUrl)}`)
+  }
+
+  if (step === 'base-url') {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Base URL</Text>
+        <Text dimColor>Enter the base URL of your Anthropic-compatible provider:</Text>
+        <TextInput
+          value={baseUrl}
+          onChange={setBaseUrl}
+          cursorOffset={baseUrlCursor}
+          onChangeCursorOffset={setBaseUrlCursor}
+          onSubmit={(value: string) => {
+            const url = value.trim()
+            if (!url) return
+            setBaseUrl(url)
+            setStep('api-key')
+          }}
+          placeholder="https://your-provider.com/api/anthropic"
+          focus={true}
+          showCursor={true}
+        />
+        <Text dimColor>Press Esc to go back</Text>
+      </Box>
+    )
+  }
+
+  if (step === 'api-key') {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>API Key</Text>
+        <Text dimColor>Enter your API key for {baseUrl}:</Text>
+        <TextInput
+          value={apiKey}
+          onChange={setApiKey}
+          cursorOffset={apiKeyCursor}
+          onChangeCursorOffset={setApiKeyCursor}
+          onSubmit={(value: string) => {
+            const trimmed = value.trim()
+            if (!trimmed) return
+            setApiKey(trimmed)
+            setStep('model')
+          }}
+          placeholder="sk-..."
+          focus={true}
+          showCursor={true}
+        />
+        <Text dimColor>Press Esc to go back</Text>
+      </Box>
+    )
+  }
+
+  if (step === 'model') {
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>Model ID</Text>
+        <Text dimColor>Enter the model ID to use:</Text>
+        <TextInput
+          value={model}
+          onChange={setModel}
+          cursorOffset={modelCursor}
+          onChangeCursorOffset={setModelCursor}
+          onSubmit={(value: string) => {
+            const trimmed = value.trim()
+            saveAndDone(trimmed || undefined)
+          }}
+          placeholder="claude-sonnet-4-6"
+          focus={true}
+          showCursor={true}
+        />
+        <Text dimColor>Press Enter to confirm · Esc to go back</Text>
+      </Box>
+    )
+  }
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Text bold>Select Model</Text>
+      <Text dimColor>Choose the model to use with this provider:</Text>
+      <Select
+        options={models.map(m => ({ label: m.id, value: m.id }))}
+        onChange={(modelId: string) => saveAndDone(pendingKey, modelId)}
+      />
+    </Box>
+  )
+}
+
 type PickerState =
   | { phase: 'pick' }
   | { phase: 'login'; targetProvider?: APIProvider }
   | { phase: 'platform-setup'; provider: APIProvider }
   | { phase: 'openai-options' }
+  | { phase: 'openrouter-setup' }
+  | { phase: 'anthropic-compat-setup' }
 
 function ProviderPickerWrapper({
   onDone,
@@ -441,6 +776,18 @@ function ProviderPickerWrapper({
       // OpenAI always shows options sub-menu
       if (provider === 'openai') {
         setState({ phase: 'openai-options' })
+        return
+      }
+
+      // OpenRouter goes directly to key setup
+      if (provider === 'openrouter') {
+        setState({ phase: 'openrouter-setup' })
+        return
+      }
+
+      // Anthropic-compatible goes directly to setup
+      if (provider === 'anthropicCompat') {
+        setState({ phase: 'anthropic-compat-setup' })
         return
       }
 
@@ -486,6 +833,26 @@ function ProviderPickerWrapper({
         onBack={handleBack}
         isCurrent={currentProvider === 'openai'}
         hasExisting={hasProviderCredentials('openai')}
+      />
+    )
+  }
+
+  if (state.phase === 'openrouter-setup') {
+    return (
+      <OpenRouterApiKeySetup
+        onDone={onDone}
+        onBack={handleBack}
+        onChangeAPIKey={context.onChangeAPIKey}
+      />
+    )
+  }
+
+  if (state.phase === 'anthropic-compat-setup') {
+    return (
+      <AnthropicCompatApiKeySetup
+        onDone={onDone}
+        onBack={handleBack}
+        onChangeAPIKey={context.onChangeAPIKey}
       />
     )
   }

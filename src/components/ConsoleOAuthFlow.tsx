@@ -10,6 +10,7 @@ import { useKeybinding } from '../keybindings/useKeybinding.js';
 import { getSSLErrorHint } from '../services/api/errorUtils.js';
 import { sendNotification } from '../services/notifier.js';
 import { runCodexOAuthFlow } from '../services/oauth/codex-client.js';
+import { CODEX_MODELS } from '../services/api/codex-fetch-adapter.js';
 import { OAuthService } from '../services/oauth/index.js';
 import { getOauthAccountInfo, saveCodexOAuthTokens, validateForceLoginOrg } from '../utils/auth.js';
 import { logError } from '../utils/log.js';
@@ -35,6 +36,9 @@ type OAuthStatus = {
   state: 'apikey_setup';
 } // OpenAI-compatible API key setup
 | {
+  state: 'anthropic_compat_setup';
+} // Anthropic-compatible API key setup
+| {
   state: 'ready_to_start';
 } // Flow started, waiting for browser to open
 | {
@@ -50,6 +54,8 @@ type OAuthStatus = {
 } | {
   state: 'success';
   token?: string;
+} | {
+  state: 'codex_model_select';
 } | {
   state: 'error';
   message: string;
@@ -175,6 +181,176 @@ function ThirdPartyApiKeySetup({
   )
 }
 
+function AnthropicCompatSetup({
+  onDone,
+  onBack,
+}: {
+  onDone(): void
+  onBack(): void
+}): React.ReactNode {
+  const [step, setStep] = React.useState<'base-url' | 'api-key' | 'model'>('base-url')
+  const [baseUrl, setBaseUrl] = React.useState('')
+  const [apiKey, setApiKey] = React.useState('')
+  const [model, setModel] = React.useState('')
+  const [baseUrlCursor, setBaseUrlCursor] = React.useState(0)
+  const [apiKeyCursor, setApiKeyCursor] = React.useState(0)
+  const [modelCursor, setModelCursor] = React.useState(0)
+
+  useKeybinding('confirm:no', onBack, { context: 'Cancel', isActive: step === 'base-url' })
+  useKeybinding('confirm:no', () => setStep('base-url'), { context: 'Cancel', isActive: step === 'api-key' })
+  useKeybinding('confirm:no', () => setStep('api-key'), { context: 'Cancel', isActive: step === 'model' })
+
+  function saveAndDone(modelId?: string) {
+    saveGlobalConfig(current => ({
+      ...current,
+      anthropicCompatApiKey: apiKey,
+      anthropicCompatBaseUrl: baseUrl,
+      anthropicCompatModel: modelId || undefined,
+      apiProvider: 'anthropicCompat',
+    }))
+    process.env.CLAUDE_CODE_USE_ANTHROPIC_COMPAT = '1'
+    onDone()
+  }
+
+  if (step === 'base-url') {
+    return (
+      <Box flexDirection="column" gap={1} marginTop={1}>
+        <Text bold>Anthropic-Compatible API Base URL</Text>
+        <Text dimColor>Enter the base URL of your Anthropic-compatible provider:</Text>
+        <TextInput
+          value={baseUrl}
+          onChange={(v) => { setBaseUrl(v); setBaseUrlCursor(v.length) }}
+          cursorOffset={baseUrlCursor}
+          onChangeCursorOffset={setBaseUrlCursor}
+          onSubmit={(value: string) => {
+            const url = value.trim()
+            if (!url) return
+            setBaseUrl(url)
+            setStep('api-key')
+          }}
+          placeholder="https://your-provider.com/api/anthropic"
+        />
+        <Text dimColor>Press Esc to go back</Text>
+      </Box>
+    )
+  }
+
+  if (step === 'api-key') {
+    return (
+      <Box flexDirection="column" gap={1} marginTop={1}>
+        <Text bold>API Key</Text>
+        <Text dimColor>Enter your API key for {baseUrl}:</Text>
+        <TextInput
+          value={apiKey}
+          onChange={(v) => { setApiKey(v); setApiKeyCursor(v.length) }}
+          cursorOffset={apiKeyCursor}
+          onChangeCursorOffset={setApiKeyCursor}
+          onSubmit={(value: string) => {
+            const trimmed = value.trim()
+            if (!trimmed) return
+            setApiKey(trimmed)
+            setStep('model')
+          }}
+          placeholder="sk-..."
+        />
+        <Text dimColor>Press Esc to go back</Text>
+      </Box>
+    )
+  }
+
+  if (step === 'model') {
+    return (
+      <Box flexDirection="column" gap={1} marginTop={1}>
+        <Text bold>Model ID</Text>
+        <Text dimColor>Enter the model ID to use:</Text>
+        <TextInput
+          value={model}
+          onChange={(v) => { setModel(v); setModelCursor(v.length) }}
+          cursorOffset={modelCursor}
+          onChangeCursorOffset={setModelCursor}
+          onSubmit={(value: string) => {
+            const trimmed = value.trim()
+            saveAndDone(trimmed || undefined)
+          }}
+          placeholder="claude-sonnet-4-6"
+        />
+        <Text dimColor>Press Enter to confirm · Esc to go back</Text>
+      </Box>
+    )
+  }
+
+  return (
+    <Box flexDirection="column" gap={1} marginTop={1}>
+      <Text bold>Select Model</Text>
+      <Text dimColor>Choose the model to use with this provider:</Text>
+      <Select
+        options={models.map(m => ({ label: m.id, value: m.id }))}
+        onChange={(modelId: string) => saveAndDone(pendingKey, modelId)}
+      />
+    </Box>
+  )
+}
+
+function CodexModelSelect({
+  onDone,
+}: {
+  onDone(): void
+}): React.ReactNode {
+  const [mode, setMode] = React.useState<'list' | 'manual'>('list')
+  const [manualModel, setManualModel] = React.useState('')
+  const [manualCursor, setManualCursor] = React.useState(0)
+
+  useKeybinding('confirm:no', () => setMode('list'), { context: 'Cancel', isActive: mode === 'manual' })
+
+  if (mode === 'manual') {
+    return (
+      <Box flexDirection="column" gap={1} marginTop={1}>
+        <Text bold>Model ID</Text>
+        <Text dimColor>Enter the model ID to use:</Text>
+        <TextInput
+          value={manualModel}
+          onChange={(v) => { setManualModel(v); setManualCursor(v.length) }}
+          cursorOffset={manualCursor}
+          onChangeCursorOffset={setManualCursor}
+          onSubmit={(value: string) => {
+            const trimmed = value.trim()
+            if (!trimmed) return
+            saveGlobalConfig(current => ({ ...current, openaiModel: trimmed }))
+            onDone()
+          }}
+          placeholder="claude-sonnet-4-6"
+        />
+        <Text dimColor>Press Esc to go back</Text>
+      </Box>
+    )
+  }
+
+  return (
+    <Box flexDirection="column" gap={1} marginTop={1}>
+      <Text bold>Select Codex Model</Text>
+      <Text dimColor>Choose the model to use with Codex:</Text>
+      <Select
+        options={[
+          ...CODEX_MODELS.map(m => ({
+            label: m.label,
+            value: m.id,
+            description: m.description,
+          })),
+          { label: 'Enter model ID manually', value: '__manual__', description: 'Type a custom model ID' },
+        ]}
+        onChange={(modelId: string) => {
+          if (modelId === '__manual__') {
+            setMode('manual')
+          } else {
+            saveGlobalConfig(current => ({ ...current, openaiModel: modelId }))
+            onDone()
+          }
+        }}
+      />
+    </Box>
+  )
+}
+
 export function ConsoleOAuthFlow({
   onDone,
   startingMessage,
@@ -238,7 +414,11 @@ export function ConsoleOAuthFlow({
     logEvent('tengu_oauth_success', {
       loginWithClaudeAi
     });
-    onDone();
+    if (loginWithCodex) {
+      setOAuthStatus({ state: 'codex_model_select' });
+    } else {
+      onDone();
+    }
   }, {
     context: 'Confirmation',
     isActive: oauthStatus.state === 'success' && mode !== 'setup-token'
@@ -574,6 +754,9 @@ function OAuthStatusMessage(t0) {
           }, {
             label: <Text>OpenAI-compatible API ·{" "}<Text dimColor={true}>Use any OpenAI-format API with your own key</Text>{"\n"}</Text>,
             value: "apikey"
+          }, {
+            label: <Text>Anthropic-compatible API ·{" "}<Text dimColor={true}>Custom endpoint using Anthropic API format</Text>{"\n"}</Text>,
+            value: "anthropic_compat"
           }];
           $[5] = t6;
         } else {
@@ -589,6 +772,8 @@ function OAuthStatusMessage(t0) {
                 });
               } else if (value_0 === "apikey") {
                 setOAuthStatus({ state: "apikey_setup" });
+              } else if (value_0 === "anthropic_compat") {
+                setOAuthStatus({ state: "anthropic_compat_setup" });
               } else if (value_0 === "codex") {
                 logEvent("tengu_oauth_codex_selected", {});
                 setLoginWithCodex(true);
@@ -683,8 +868,12 @@ function OAuthStatusMessage(t0) {
         }
         return t8;
       }
+    case "codex_model_select":
+      return <CodexModelSelect onDone={onDone} />;
     case "apikey_setup":
       return <ThirdPartyApiKeySetup onDone={onDone} onBack={() => setOAuthStatus({ state: "idle" })} />;
+    case "anthropic_compat_setup":
+      return <AnthropicCompatSetup onDone={onDone} onBack={() => setOAuthStatus({ state: "idle" })} />;
     case "waiting_for_login":
       {
         let t1;

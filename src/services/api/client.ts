@@ -36,6 +36,7 @@ import {
   isEnvTruthy,
 } from '../../utils/envUtils.js'
 import { createCodexFetch, createOpenAIApiFetch } from './codex-fetch-adapter.js'
+import { createChatCompletionsFetch, OPENROUTER_DEFAULT_BASE_URL } from './chat-completions-adapter.js'
 
 /**
  * Environment variables for different client types:
@@ -330,6 +331,37 @@ export async function getAnthropicClient({
         apiKey: 'openai-placeholder', // SDK requires a key but the fetch adapter handles auth
         ...ARGS,
         fetch: openAIFetch as unknown as typeof globalThis.fetch,
+        ...(isDebugToStdErr() && { logger: createStderrLogger() }),
+      }
+      return new Anthropic(clientConfig)
+    }
+  }
+
+  // ── Anthropic-compatible provider (custom baseURL + API key) ────────
+  if (getAPIProvider() === 'anthropicCompat') {
+    const { getGlobalConfig } = await import('../../utils/config.js')
+    const cfg = getGlobalConfig()
+    if (cfg.anthropicCompatApiKey && cfg.anthropicCompatBaseUrl) {
+      const clientConfig: ConstructorParameters<typeof Anthropic>[0] = {
+        apiKey: cfg.anthropicCompatApiKey,
+        baseURL: cfg.anthropicCompatBaseUrl,
+        ...ARGS,
+        ...(isDebugToStdErr() && { logger: createStderrLogger() }),
+      }
+      return new Anthropic(clientConfig)
+    }
+  }
+
+  // ── OpenRouter provider via Chat Completions fetch adapter ──────────
+  if (getAPIProvider() === 'openrouter') {
+    const { getGlobalConfig } = await import('../../utils/config.js')
+    const cfg = getGlobalConfig()
+    if (cfg.openrouterApiKey) {
+      const orFetch = createChatCompletionsFetch(cfg.openrouterApiKey, OPENROUTER_DEFAULT_BASE_URL)
+      const clientConfig: ConstructorParameters<typeof Anthropic>[0] = {
+        apiKey: 'openrouter-placeholder',
+        ...ARGS,
+        fetch: orFetch as unknown as typeof globalThis.fetch,
         ...(isDebugToStdErr() && { logger: createStderrLogger() }),
       }
       return new Anthropic(clientConfig)

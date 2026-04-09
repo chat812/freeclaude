@@ -1,9 +1,11 @@
 // biome-ignore-all assist/source/organizeImports: ANT-ONLY import markers must not be reordered
 import { getInitialMainLoopModel } from '../../bootstrap/state.js'
 import {
+  isAnthropicCompatUser,
   isClaudeAISubscriber,
   isCodexSubscriber,
   isMaxSubscriber,
+  isOpenRouterUser,
   isTeamPremiumSubscriber,
 } from '../auth.js'
 import { getModelStrings } from './modelStrings.js'
@@ -370,6 +372,39 @@ function getModelOptionsBase(fastMode = false): ModelOption[] {
 
     standardOptions.push(MaxHaiku45Option)
     return standardOptions
+  }
+
+  // Anthropic-compatible: show fetched models from config
+  if (isAnthropicCompatUser()) {
+    const cfg = getGlobalConfig()
+    if (cfg.anthropicCompatAvailableModels && cfg.anthropicCompatAvailableModels.length > 0) {
+      return cfg.anthropicCompatAvailableModels.map(id => ({
+        value: id,
+        label: id,
+        description: '',
+      }))
+    }
+    if (cfg.anthropicCompatModel) {
+      return [{ value: cfg.anthropicCompatModel, label: cfg.anthropicCompatModel, description: '' }]
+    }
+    return []
+  }
+
+  // OpenRouter: show fetched models from config
+  if (isOpenRouterUser()) {
+    const cfg = getGlobalConfig()
+    if (cfg.openrouterAvailableModels && cfg.openrouterAvailableModels.length > 0) {
+      return cfg.openrouterAvailableModels.map(id => ({
+        value: id,
+        label: id,
+        description: '',
+      }))
+    }
+    // Fallback if no models cached yet
+    if (cfg.openrouterModel) {
+      return [{ value: cfg.openrouterModel, label: cfg.openrouterModel, description: '' }]
+    }
+    return []
   }
 
   // PAYG 1P API: Default (Sonnet) + Sonnet 1M + Opus 4.6 + Opus 1M + Haiku

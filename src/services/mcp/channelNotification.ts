@@ -205,10 +205,24 @@ export function gateChannelServer(
     }
   }
 
+  // User-level session opt-in. A server must be explicitly listed in
+  // --channels to push inbound this session — protects against a trusted
+  // server surprise-adding the capability. Resolved early so entry.dev can
+  // bypass the runtime gate below.
+  const entry = findChannelEntry(serverName, getAllowedChannels())
+  if (!entry) {
+    return {
+      action: 'skip',
+      kind: 'session',
+      reason: `server ${serverName} not in --channels list for this session`,
+    }
+  }
+
   // Overall runtime gate. After capability so normal MCP servers never hit
   // this path. Before auth/policy so the killswitch works regardless of
-  // session state.
-  if (!isChannelsEnabled()) {
+  // session state. entry.dev (--dangerously-load-development-channels) bypasses
+  // so local dev servers work without the GrowthBook flag being enabled.
+  if (!isChannelsEnabled() && !entry.dev) {
     return {
       action: 'skip',
       kind: 'disabled',
@@ -219,7 +233,8 @@ export function gateChannelServer(
   // OAuth-only. API key users (console) are blocked — there's no
   // channelsEnabled admin surface in console yet, so the policy opt-in
   // flow doesn't exist for them. Drop this when console parity lands.
-  if (!getClaudeAIOAuthTokens()?.accessToken) {
+  // entry.dev bypasses so --dangerously-load-development-channels works without OAuth.
+  if (!getClaudeAIOAuthTokens()?.accessToken && !entry.dev) {
     return {
       action: 'skip',
       kind: 'auth',
@@ -241,18 +256,6 @@ export function gateChannelServer(
       kind: 'policy',
       reason:
         'channels not enabled by org policy (set channelsEnabled: true in managed settings)',
-    }
-  }
-
-  // User-level session opt-in. A server must be explicitly listed in
-  // --channels to push inbound this session — protects against a trusted
-  // server surprise-adding the capability.
-  const entry = findChannelEntry(serverName, getAllowedChannels())
-  if (!entry) {
-    return {
-      action: 'skip',
-      kind: 'session',
-      reason: `server ${serverName} not in --channels list for this session`,
     }
   }
 

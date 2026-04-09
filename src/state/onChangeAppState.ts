@@ -8,6 +8,7 @@ import { getGlobalConfig, saveGlobalConfig } from '../utils/config.js'
 import { toError } from '../utils/errors.js'
 import { logError } from '../utils/log.js'
 import { applyConfigEnvironmentVariables } from '../utils/managedEnv.js'
+import { getAPIProvider } from '../utils/model/providers.js'
 import {
   permissionModeFromString,
   toExternalPermissionMode,
@@ -99,6 +100,16 @@ export function onChangeAppState({
     // Remove from settings
     updateSettingsForSource('userSettings', { model: undefined })
     setMainLoopModelOverride(null)
+
+    // Also clear provider-specific model so the hardcoded default is used
+    const provider = getAPIProvider()
+    if (provider === 'openai') {
+      saveGlobalConfig(current => ({ ...current, openaiModel: undefined }))
+    } else if (provider === 'openrouter') {
+      saveGlobalConfig(current => ({ ...current, openrouterModel: undefined }))
+    } else if (provider === 'anthropicCompat') {
+      saveGlobalConfig(current => ({ ...current, anthropicCompatModel: undefined }))
+    }
   }
 
   // mainLoopModel: add it to settings?
@@ -109,6 +120,17 @@ export function onChangeAppState({
     // Save to settings
     updateSettingsForSource('userSettings', { model: newState.mainLoopModel })
     setMainLoopModelOverride(newState.mainLoopModel)
+
+    // Also save to provider-specific GlobalConfig so the model persists
+    // as the default for this provider across sessions
+    const provider = getAPIProvider()
+    if (provider === 'openai') {
+      saveGlobalConfig(current => ({ ...current, openaiModel: newState.mainLoopModel }))
+    } else if (provider === 'openrouter') {
+      saveGlobalConfig(current => ({ ...current, openrouterModel: newState.mainLoopModel }))
+    } else if (provider === 'anthropicCompat') {
+      saveGlobalConfig(current => ({ ...current, anthropicCompatModel: newState.mainLoopModel }))
+    }
   }
 
   // expandedView → persist as showExpandedTodos + showSpinnerTree for backwards compat
