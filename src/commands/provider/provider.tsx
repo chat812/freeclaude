@@ -17,6 +17,8 @@ import { getCodexOAuthTokens, hasAnthropicApiKeyAuth } from '../../utils/auth.js
 import { getGlobalConfig, saveGlobalConfig } from '../../utils/config.js'
 import { OPENROUTER_DEFAULT_BASE_URL } from '../../services/api/chat-completions-adapter.js'
 import { getAPIProvider, type APIProvider } from '../../utils/model/providers.js'
+import { setMainLoopModelOverride } from '../../bootstrap/state.js'
+import { useSetAppState } from '../../state/AppState.js'
 import { updateSettingsForSource } from '../../utils/settings/settings.js'
 
 const PROVIDER_OPTIONS: Array<{
@@ -97,6 +99,10 @@ function applyProvider(provider: APIProvider): void {
   // Clear stale model from settings — the old provider's model won't work
   // with the new provider. The new provider's default will be used instead.
   updateSettingsForSource('userSettings', { model: undefined })
+
+  // Clear the in-memory model override so model resolution falls through
+  // to the new provider's default instead of reusing the old provider's model.
+  setMainLoopModelOverride(undefined)
 
   // Persist the choice so it survives restarts
   saveGlobalConfig((current) => ({
@@ -269,6 +275,7 @@ function OpenAIApiKeySetup({
   onChangeAPIKey: () => void
 }): React.ReactNode {
   const cfg = getGlobalConfig()
+  const setAppState = useSetAppState()
   const [step, setStep] = React.useState<'api-key' | 'base-url' | 'loading' | 'model-select'>('api-key')
   const [apiKey, setApiKey] = React.useState(cfg.openaiApiKey ?? '')
   const [baseUrl, setBaseUrl] = React.useState(cfg.openaiBaseUrl ?? '')
@@ -295,6 +302,11 @@ function OpenAIApiKeySetup({
       delete process.env[envVar]
     }
     process.env.CLAUDE_CODE_USE_OPENAI = '1'
+    // Update both the bootstrap override and AppState so /model shows the
+    // correct model immediately and the model resolution chain is consistent.
+    setMainLoopModelOverride(modelId || undefined)
+    updateSettingsForSource('userSettings', { model: modelId || undefined })
+    setAppState(prev => ({ ...prev, mainLoopModel: modelId ?? null }))
     onChangeAPIKey()
     const urlMsg = baseUrl ? ` with base URL ${chalk.dim(baseUrl)}` : ''
     onDone(
@@ -411,6 +423,7 @@ function OpenRouterApiKeySetup({
   onChangeAPIKey: () => void
 }): React.ReactNode {
   const cfg = getGlobalConfig()
+  const setAppState = useSetAppState()
   const [step, setStep] = React.useState<'api-key' | 'loading' | 'model-select'>('api-key')
   const [apiKey, setApiKey] = React.useState(cfg.openrouterApiKey ?? '')
   const [models, setModels] = React.useState<Array<{ id: string }>>([])
@@ -433,6 +446,9 @@ function OpenRouterApiKeySetup({
       delete process.env[envVar]
     }
     process.env.CLAUDE_CODE_USE_OPENROUTER = '1'
+    setMainLoopModelOverride(modelId || undefined)
+    updateSettingsForSource('userSettings', { model: modelId || undefined })
+    setAppState(prev => ({ ...prev, mainLoopModel: modelId ?? null }))
     onChangeAPIKey()
     onDone(`Switched provider to ${chalk.bold(getProviderLabel('openrouter'))} using API key`)
   }
@@ -521,6 +537,7 @@ function OpenAIOptionsMenu({
   hasExisting: boolean
 }): React.ReactNode {
   const [subPhase, setSubPhase] = React.useState<'menu' | 'oauth' | 'apikey'>('menu')
+  const setAppState = useSetAppState()
 
   const handleSelect = React.useCallback(
     (value: string) => {
@@ -532,6 +549,7 @@ function OpenAIOptionsMenu({
           )
         } else {
           applyProvider('openai')
+          setAppState(prev => ({ ...prev, mainLoopModel: null }))
           onDone(
             `Switched provider to ${chalk.bold(getProviderLabel('openai'))}`,
           )
@@ -622,6 +640,7 @@ function AnthropicCompatApiKeySetup({
   onChangeAPIKey: () => void
 }): React.ReactNode {
   const cfg = getGlobalConfig()
+  const setAppState = useSetAppState()
   const [step, setStep] = React.useState<'base-url' | 'api-key' | 'loading' | 'model-select' | 'model'>('base-url')
   const [baseUrl, setBaseUrl] = React.useState(cfg.anthropicCompatBaseUrl ?? '')
   const [apiKey, setApiKey] = React.useState(cfg.anthropicCompatApiKey ?? '')
@@ -653,6 +672,9 @@ function AnthropicCompatApiKeySetup({
       delete process.env[envVar]
     }
     process.env.CLAUDE_CODE_USE_ANTHROPIC_COMPAT = '1'
+    setMainLoopModelOverride(modelId || undefined)
+    updateSettingsForSource('userSettings', { model: modelId || undefined })
+    setAppState(prev => ({ ...prev, mainLoopModel: modelId ?? null }))
     onChangeAPIKey()
     onDone(`Switched provider to ${chalk.bold(getProviderLabel('anthropicCompat'))} at ${chalk.dim(baseUrl)}`)
   }
@@ -848,6 +870,7 @@ function ProviderPickerWrapper({
   context: LocalJSXCommandContext
 }): React.ReactNode {
   const currentProvider = getAPIProvider()
+  const setAppState = useSetAppState()
   const [state, setState] = React.useState<PickerState>({ phase: 'pick' })
 
   const handleCancel = React.useCallback(() => {
@@ -908,6 +931,7 @@ function ProviderPickerWrapper({
 
       // Credentials exist, just switch
       applyProvider(provider)
+      setAppState(prev => ({ ...prev, mainLoopModel: null }))
       onDone(
         `Switched provider to ${chalk.bold(getProviderLabel(provider))}`,
       )
@@ -1021,6 +1045,7 @@ function SetProviderAndClose({
   ) => void
 }): React.ReactNode {
   const currentProvider = getAPIProvider()
+  const setAppState = useSetAppState()
 
   React.useEffect(() => {
     const normalized = args.toLowerCase().trim()
@@ -1051,6 +1076,7 @@ function SetProviderAndClose({
     }
 
     applyProvider(match.value)
+    setAppState(prev => ({ ...prev, mainLoopModel: null }))
     onDone(
       `Switched provider to ${chalk.bold(getProviderLabel(match.value))}`,
     )
